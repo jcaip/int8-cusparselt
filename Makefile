@@ -65,23 +65,25 @@ all:
 	@echo
 else
 
-all: matmul_example # matmul_example_static
+all: matmul_example matmul_example_2
 
-matmul_example: matmul_example.cpp
-	nvcc --std=c++14  ${INCS}  matmul_example.cpp -o matmul_example            \
+matmul_example: matmul_example_original.cpp
+	nvcc --std=c++14  ${INCS}  matmul_example_original.cpp -o matmul_example            \
          -L${CUSPARSELT_PATH}/lib64  -lcusparseLt ${LIBS} -g -O0
 
-#matmul_example_static: matmul_example.cpp
-	#nvcc --std=c++14 ${INCS} matmul_example.cpp -o matmul_example_static       \
-         #-L${CUSPARSELT_PATH}/lib64 -lcusparseLt_static ${LIBS}
+matmul_example_2: matmul_example_2.cpp
+	nvcc --std=c++14 ${INCS} matmul_example_2.cpp -o matmul_example_2            \
+         -L${CUSPARSELT_PATH}/lib64 -lcusparseLt ${LIBS} -g -O0
 
 test:
-	@echo "\n==== cusparseLt Matmul Test ====\n"
+	@echo "\n==== cusparseLt Matmul Test using Prune/Compress ====\n"
 	./matmul_example
+	@echo "\n==== cusparseLt Matmul Test using Prune/Compress 2====\n"
+	./matmul_example_2
 
 endif
 
 clean:
-	rm -f matmul_example matmul_example_static
+	rm -f matmul_example matmul_example_2
 
 .PHONY: clean all test

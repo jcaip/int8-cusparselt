@@ -50,6 +50,7 @@
 #include <cusparseLt.h>       // cusparseLt header
 #include <cstdio>             // printf
 #include <cstdlib>            // std::rand
+#include <iostream>
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -89,14 +90,14 @@ int main(void) {
     }
     // Host problem definition, row-major order
     // bigger sizes may require dynamic allocations
-    constexpr int m            = 32;
-    constexpr int n            = 32;
-    constexpr int k            = 32;
+    constexpr int m            = 64;
+    constexpr int n            = 64;
+    constexpr int k            = 64;
     auto          order        = CUSPARSE_ORDER_ROW;
     auto          opA          = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    auto          opB          = CUSPARSE_OPERATION_NON_TRANSPOSE;
-    auto          type         = CUDA_R_16F;
-    auto          compute_type = CUSPARSE_COMPUTE_16F;
+    auto          opB          = CUSPARSE_OPERATION_TRANSPOSE;
+    auto          type         = CUDA_R_8I;
+    auto          compute_type = CUSPARSE_COMPUTE_32I;
 
     bool     is_rowmajor    = (order == CUSPARSE_ORDER_ROW);
     bool     isA_transposed = (opA != CUSPARSE_OPERATION_NON_TRANSPOSE);
@@ -119,11 +120,13 @@ int main(void) {
     auto     C_size         = C_height * ldc * sizeof(int8_t);
     int8_t hA[m * k];
     int8_t hB[k * n];
-    int8_t hC[m * n] = {};
+    int8_t hC[m * n];
     for (int i = 0; i < m * k; i++)
-        hA[i] = static_cast<int8_t>(static_cast<float>(std::rand() % 10));
+    {
+        hA[i] = static_cast<int8_t>(std::rand() % 2);
+    }
     for (int i = 0; i < k * n; i++)
-        hB[i] = static_cast<int8_t>(static_cast<float>(std::rand() % 10));
+        hB[i] = static_cast<int8_t>(std::rand() % 2);
     float alpha = 1.0f;
     float beta  = 0.0f;
     //--------------------------------------------------------------------------
@@ -173,8 +176,8 @@ int main(void) {
 
     //--------------------------------------------------------------------------
     // Prune the A matrix (in-place) and check the correctness
-    CHECK_CUSPARSE( cusparseLtSpMMAPrune(&handle, &matmul, dA, dA,
-                                         CUSPARSELT_PRUNE_SPMMA_TILE, stream) )
+    CHECK_CUSPARSE( cusparseLtSpMMAPrune(&handle, &matmul, dA, dA, CUSPARSELT_PRUNE_SPMMA_STRIP, stream) )
+
     CHECK_CUSPARSE( cusparseLtSpMMAPruneCheck(&handle, &matmul, dA,
                                               d_valid, stream) )
     int is_valid;
@@ -203,16 +206,16 @@ int main(void) {
     // Search the best kernel
     int           num_streams = 0;
     cudaStream_t* streams     = nullptr;
-    CHECK_CUSPARSE( cusparseLtMatmulSearch(&handle, &plan, &alpha,
-                                           dA_compressed, dB, &beta,
-                                           dC, dD, nullptr,
-                                           streams, num_streams) )
+    // CHECK_CUSPARSE( cusparseLtMatmulSearch(&handle, &plan, &alpha,
+    //                                        dA_compressed, dB, &beta,
+    //                                        dC, dD, nullptr,
+    //                                        streams, num_streams) )
     // otherwise, it is possible to set it directly:
-    //int alg = 0;
-    //CHECK_CUSPARSE( cusparseLtMatmulAlgSetAttribute(
-    //                                        &handle, &alg_sel,
-    //                                        CUSPARSELT_MATMUL_ALG_CONFIG_ID,
-    //                                        &alg, sizeof(alg)))
+    int alg = 3;
+    CHECK_CUSPARSE( cusparseLtMatmulAlgSetAttribute(
+                                           &handle, &alg_sel,
+                                           CUSPARSELT_MATMUL_ALG_CONFIG_ID,
+                                           &alg, sizeof(alg)))
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     size_t workspace_size;
     CHECK_CUSPARSE( cusparseLtMatmulPlanInit(&handle, &plan, &matmul, &alg_sel))
@@ -241,15 +244,15 @@ int main(void) {
     bool A_std_layout = (is_rowmajor != isA_transposed);
     bool B_std_layout = (is_rowmajor != isB_transposed);
     // host computation
-    float hC_result[m * n];
+    int8_t hC_result[m * n];
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
-            float sum  = 0.0f;
+            int8_t sum  = 0;
             for (int k1 = 0; k1 < k; k1++) {
                 auto posA = (A_std_layout) ? i * lda + k1 : i + k1 * lda;
                 auto posB = (B_std_layout) ? k1 * ldb + j : k1 + j * ldb;
-                sum      += static_cast<float>(hA[posA]) *  // [i][k]
-                            static_cast<float>(hB[posB]);   // [k][j]
+                sum      += static_cast<int8_t>(hA[posA]) *  // [i][k]
+                            static_cast<int8_t>(hB[posB]);   // [k][j]
             }
             auto posC       = (is_rowmajor) ? i * ldc + j : i + j * ldc;
             hC_result[posC] = sum;  // [i][j]
@@ -260,11 +263,11 @@ int main(void) {
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
             auto pos          = (is_rowmajor) ? i * ldc + j : i + j * ldc;
-            auto device_value = static_cast<float>(hC[pos]);
+            auto device_value = static_cast<int8_t>(hC[pos]);
             auto host_value   = hC_result[pos];
             if (device_value != host_value) {
                 // direct floating point comparison is not reliable
-                std::printf("(%d, %d):\t%f vs. %f\n",
+                std::printf("(%d, %d):\t%d vs. %d\n",
                             i, j, host_value, device_value);
                 correct = 0;
                 break;
